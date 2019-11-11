@@ -1,0 +1,1080 @@
+---
+title: "STAT 154 Project2"
+author: "Fei Hanting, Evelyn Zou"
+date: "05/05/2019"
+output: html_document
+---
+###### TITLE: STAT-154 Project2 Codes
+###### DATE: 05/05/2019
+###### AUTHOR: 
+#### Hanting Fei(#SID: 3034489420)
+#### Evelyn Zou(#SID: 303193215)
+
+```{r, include=FALSE}
+# Packages Used
+library(ggplot2)
+library(corrplot)
+library(gbm)
+library(rpart)
+library(MASS)
+library(rpart)
+library(ipred)
+library(randomForest)
+library(caret)
+library(nnet)
+library(bmrm)
+library(e1071)
+library(ada)
+library(pROC)
+library(lattice)
+```
+
+```{r, include=FALSE}
+# Import Data of Three Images
+image1=read.table("E:\\费\\专业\\berkeley\\statistical prediction\\project2\\image1.txt")
+image2=read.table("E:\\费\\专业\\berkeley\\statistical prediction\\project2\\image2.txt")
+image3=read.table("E:\\费\\专业\\berkeley\\statistical prediction\\project2\\image3.txt")
+
+collabs = c('y','x','label','NDAI','SD','CORR','DF','CF','BF','AF','AN')
+names(image1) = collabs
+names(image2) = collabs
+names(image3) = collabs
+```
+
+```{r}
+set.seed(1)
+sm=1 # Splitting Method 1 Set
+```
+
+### Question 1: Data Collection and Exploration
+
+#####(b)
+```{r}
+# Data Summary
+# Image 1
+summary(image1)
+table(image1$label)
+table(image1$label)/nrow(image1)
+
+# Image 2
+summary(image2)
+diag(var(image2))
+table(image2$label)
+table(image2$label)/nrow(image2)
+
+# Image 3
+summary(image3)
+table(image3$label)
+table(image3$label)/nrow(image3)
+```
+
+```{r}
+# Image 1 Plot
+ggplot(image1) + geom_point(aes(x=x, y=y, color=factor(label))) +
+  scale_color_manual(values=c("black", "dark grey", "white")) +
+  ggtitle("Image 1 Map")
+
+# Image 2 Plot
+ggplot(image2) + geom_point(aes(x=x, y=y, color=factor(label))) +
+  scale_color_manual(values=c("black", "dark grey", "white")) +
+  ggtitle("Image 2 Map")
+
+# Image 3 Plot
+ggplot(image3) + geom_point(aes(x=x, y=y, color=factor(label))) +
+  scale_color_manual(values=c("black", "dark grey", "white")) +
+  ggtitle("Image 3 Map") 
+```
+
+#####(c)
+```{r}
+# Image 1
+corrplot(cor(image1[image1$label == 1,]), method = "num")
+corrplot(cor(image1[image1$label == -1,]), method = "num")
+
+# Image 2
+corrplot(cor(image2[image2$label == 1,]), method = "num")
+corrplot(cor(image2[image2$label == -1,]), method = "num")
+
+# Image 3
+corrplot(cor(image3[image3$label == 1,]), method = "num")
+corrplot(cor(image3[image3$label == -1,]), method = "num")
+```
+
+
+### Question 2: Preparation
+#####(a)
+```{r}
+# Splitting Method 1
+
+if(sm==1) {
+list.images=list(image1,image2, image3)
+
+for (i in 1:3){
+      list.images[[i]] = list.images[[i]][list.images[[i]]$label != 0, ]
+}
+  train.index1 = sample(nrow(list.images[[1]]), 
+                        nrow(list.images[[1]])*0.5)
+  train.index2 = sample(nrow(list.images[[2]]), 
+                        nrow(list.images[[2]])*0.5)
+  train.index3 = sample(nrow(list.images[[3]]), 
+                        nrow(list.images[[3]])*0.5)
+  
+  vali.index1=sample(train.index1,0.5*length(train.index1))
+  vali.index2=sample(train.index2,0.5*length(train.index2))
+  vali.index3=sample(train.index3,0.5*length(train.index3))
+ 
+  trainsub1=list.images[[1]][ -train.index1, ]
+  valisub1=list.images[[1]][vali.index1, ]
+  testsub1=list.images[[1]][train.index1,][train.index1%in%vali.index1==FALSE,]
+  
+  trainsub2=list.images[[2]][ -train.index2, ]
+  valisub2=list.images[[2]][vali.index2, ]
+  testsub2=list.images[[2]][train.index2,][train.index2%in%vali.index2==FALSE,]
+  
+  trainsub3= list.images[[3]][ -train.index3, ]
+  valisub3=list.images[[3]][vali.index3, ]
+  testsub3=list.images[[3]][train.index3,][train.index3%in%vali.index3==FALSE,]
+  
+  train=rbind(trainsub1,trainsub2,trainsub3)
+  test=rbind(testsub1,testsub2,testsub3)
+  vali=rbind(valisub1,valisub2,valisub3)
+
+train$label = (1 + train$label)/2
+test$label = (1 + test$label)/2
+vali$label = (1 + vali$label)/2}
+```
+
+```{r}
+# Splitting Method 2
+
+if(sm==2) {
+ zero=TRUE
+ list.images=list(image1,image2,image3)
+ part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=sample(k^2,round(part*k^2))
+  other.blocks.index=index.all[index.all%in%train.blocks.index==FALSE]
+  vali.blocks.index=sample(other.blocks.index,round(length(other.blocks.index)/2))
+  test.blocks.index=other.blocks.index[other.blocks.index%in%vali.blocks.index==FALSE]
+  
+  train.index=list.images[[i]]$blockid%in%train.blocks.index
+  vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+  test.index=list.images[[i]]$blockid%in%test.blocks.index
+
+  trainsub[[i]]=list.images[[i]][ train.index, ]
+  valisub[[i]] =  list.images[[i]][vali.index, ]
+  testsub[[i]]=list.images[[i]][test.index,]
+
+}
+
+ggplot(list.images[[1]]) + 
+  ggtitle("Image 1 Map") + geom_point(aes(x=x, y=y, color=factor(blockid)))
+ggplot(list.images[[2]]) + 
+  ggtitle("Image 2 Map") + geom_point(aes(x=x, y=y, color=factor(blockid)))
+ggplot(list.images[[3]]) + 
+  ggtitle("Image 3 Map") + geom_point(aes(x=x, y=y, color=factor(blockid))) 
+
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+
+if (zero) {
+  train = train[train$label != 0, ]
+  test=test[test$label!=0,]
+  vali=vali[vali$label!=0,]
+  
+  train$label = (train$label + 1)/2
+  test$label= (test$label + 1)/2
+  vali$label=(vali$label + 1)/2
+}}
+```
+
+
+#####(b)
+For this part, we design a trivial classifier reporting both the label with the highest frequency, and its accuracy of classification in the data. 
+
+In this case, since the labels for the testing set are mostly -1, the classifier sets all labels to -1 as below:
+```{r}
+trivial_clsfy = function(test) {
+  if ( nrow(test[test$label  == 1,])  > nrow(test[test$label  == 0,]) ) {
+  list(table(rep(1, nrow(test))),
+       accuracy = nrow(test[test$label == 1,])/nrow(test))
+  } else {
+    list(table(rep(-1, nrow(test))),
+         accuracy = nrow(test[test$label == 0,])/nrow(test))
+  }
+}
+
+trivial_clsfy(test)
+trivial_clsfy(vali)
+```
+
+Since this trivial classifier only displays the majority of the labels, it has high accuracy when a particular label is much more than the other one in the data set. 
+
+#####(c)
+```{r}
+# Scatterplots
+plot.1 = ggplot(test, aes(x=CORR, y=AF)) + geom_point(aes(col=factor(label)))
+plot.2 = ggplot(test, aes(x=CORR, y=CF)) + geom_point(aes(col=factor(label)))
+plot.3 = ggplot(test, aes(x=CORR, y=SD)) + geom_point(aes(col=factor(label)))
+plot.4 = ggplot(test, aes(x=CORR, y=NDAI)) + geom_point(aes(col=factor(label)))
+
+grid.arrange(plot.1, plot.2, plot.3, plot.4)
+```
+
+```{r}
+# Scatterplots
+plot.5 = ggplot(test, aes(x=AF, y=CF)) + geom_point(aes(col=factor(label)))
+plot.6 = ggplot(test, aes(x=AF, y=NDAI)) + geom_point(aes(col=factor(label)))
+plot.7 = ggplot(test, aes(x=AF, y=CORR)) + geom_point(aes(col=factor(label)))
+plot.8 = ggplot(test, aes(x=AF, y=SD)) + geom_point(aes(col=factor(label)))
+
+grid.arrange(plot.5, plot.6, plot.7, plot.8)
+```
+
+
+```{r}
+# Density Plots
+label=train$label
+cloud =2*train$label - 1
+
+plot1 = ggplot(train) + 
+  geom_density(aes(x=DF, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot2 = ggplot(train) + 
+  geom_density(aes(x=CF, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot3 = ggplot(train) + 
+  geom_density(aes(x=BF, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot4 = ggplot(train) + 
+  geom_density(aes(x=AF, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot5 = ggplot(train) + 
+  geom_density(aes(x=AN, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot6 = ggplot(train) + 
+  geom_density(aes(x=CORR, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot7 = ggplot(train) + 
+  geom_density(aes(x=SD, group=factor(label), fill=factor(cloud)), alpha=0.6)
+plot8 = ggplot(train) + 
+  geom_density(aes(x=NDAI, group=factor(label), fill=factor(cloud)), alpha=0.6)
+
+grid.arrange(plot1, plot2, plot3, plot4)
+grid.arrange(plot5, plot6, plot7, plot8)
+```
+
+#####(d)
+```{r}
+# CVgeneric Function
+
+CVgeneric = function(classify,feature,label,K,loss){
+  los=rep(0,K);err=rep(0,K)
+  lda.result<-lda.pre<-list()
+  svm.result<-svm.pre<-list()
+  ada.result<-ada.pre<-list()
+  rf.result<-rf.pre<-list()
+  logistic.result<-logistic.pre<-list()
+  folds<-createFolds(y=label,k=K)
+  if (classify=="lda"){
+  for (i in 1:K) {
+    lda.result[[i]]=nrbm(logisticLoss(as.matrix(feature[-folds[[i]],]), label[-folds[[i]]]==1))
+    lda.pre[[i]]=as.numeric(predict(lda.result[[i]],as.matrix(feature[-folds[[i]],])))
+    los[i]=lvalue(lda.result[[i]])
+    err[i]=mean(lda.pre[[i]]!= label[-folds[[i]]])}
+    
+    if(loss=="NB"){
+      return(list(los,mean(los)))
+    }else if(loss=="default") {
+      return(list(err,mean(err)))
+    }
+  }
+ 
+  else if(classify=="svm"){
+    for (i in 1:K) {
+   svm.result[[i]]=nrbm(hingeLoss(as.matrix(feature[-folds[[i]],]), label[-folds[[i]]]==1))
+    svm.pre[[i]]=as.numeric(predict(svm.result[[i]],as.matrix(feature[-folds[[i]],])))
+    los[i]=lvalue(svm.result[[i]])
+    err[i]=mean(svm.pre[[i]]!= label[-folds[[i]]])}
+    
+    if(loss=="NB"){
+      return(list(los,mean(los)))
+    }else if(loss=="default") {
+      return(list(err,mean(err)))
+    }
+  }
+  
+  else if(classify=="logistic"){
+    for (i in 1:K) {
+   logistic.result[[i]]=nrbm(logisticLoss(as.matrix(feature[-folds[[i]],]), label[-folds[[i]]]==1))
+    logistic.pre[[i]]=as.numeric(predict(logistic.result[[i]],as.matrix(feature[-folds[[i]],])))
+    los[i]=lvalue(logistic.result[[i]])
+    err[i]=mean(logistic.pre[[i]]!= label[-folds[[i]]])}
+    
+    if(loss=="NB"){
+      return(list(los,mean(los)))
+    }else if(loss=="default") {
+      return(list(err,mean(err)))
+    }
+  }
+  
+  else if(classify=="ada"){
+    for (i in 1:K) {
+      ada.result[[i]] = ada(label~NDAI + SD + CORR + DF+CF + BF + AF + AN, data = feature[-folds[[i]],],loss = "logistic", type = "discrete")
+    ada.pre[[i]] = predict(ada.result[[i]], newdata = feature[folds[[i]],], type = "vector")
+    err[i]=mean(ada.pre[[i]]!= label[folds[[i]]])
+    }
+  if(loss=="default") {
+      return(list(err,mean(err)))
+  }}
+  
+  else if(classify=="rf"){
+    for (i in 1:K) {
+     rf.result[[i]] = randomForest(factor(label)~NDAI + SD + CORR + DF+CF + BF + AF + AN, data = feature[-folds[[i]],], ntree = 160)
+    rf.pre[[i]] = predict(rf.result[[i]], newdata = feature[folds[[i]],],type="class")
+    err[i]=mean(rf.pre[[i]]!= label[folds[[i]]])
+    }
+  if(loss=="default") {
+      return(list(err,mean(err)))
+    }}
+}
+```
+
+```{r}
+result = CVgeneric("logistic", train, train$label, 10, "d")
+result
+```
+
+### Question 3: Modeling
+#####(a)
+Following the splittig methods from 2(a), we have the training set(not the CV set) and the test set as:
+```{r}
+raw.data = rbind(train, vali)
+```
+
+Next, we apply different classification methods to it based on the three best features from 2(c). Then, we report the accuracies across the folds for different classifiers(LDA, QDA, Logistic Regression, Adaboost, etc.) as below:
+
+LDA:
+```{r}
+# LDA
+lda.fit = lda(as.factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, data=raw.data)
+lda.pred = predict(lda.fit, test)
+table(lda.pred$class)
+1-mean(lda.pred$class != test$label) # accuracy
+
+# CVgeneric Function Verification
+result=CVgeneric("lda", raw.data, raw.data$label, 10, "default")
+1-result[[1]]
+1-result[[2]]
+```
+
+QDA:
+```{r}
+# QDA
+qda.fit = qda(as.factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, raw.data)
+qda.pred = predict(qda.fit, test)
+table(qda.pred$class)
+1-mean(qda.pred$class != test$label) # accuracy
+
+# CVgeneric Function Verification
+result=CVgeneric("qda", raw.data, raw.data$label, 10, "default")
+1-result[[1]]
+1-result[[2]]
+
+# CV Verification
+K=10;folds<-createFolds(y=label,k=K);
+err=c()
+feature=raw.data[,3:11]
+qda.result=qda.pre=list()
+for (i in 1:K) {
+    qda.result[[i]]=qda(label~NDAI+CORR+SD+DF+CF+BF+AF+AN,feature[-folds[[i]],])
+    
+    qda.pre[[i]]=predict(qda.result[[i]],feature[-folds[[i]],])
+   
+    err[i]=mean(qda.pre[[i]]$class!= feature$label[-folds[[i]]])
+    }
+  1 - err
+    1 - mean(err)
+```
+
+Logistic Regression:
+```{r}
+# Logistic Regression
+glm.fit = glm(as.factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+              data=raw.data, family=binomial)
+glm.probs = predict(glm.fit, test, type="response")
+glm.pred = rep(0, length(glm.probs))
+glm.pred[glm.probs >= 0.5] = 1
+table(glm.pred)
+1-mean(glm.pred != test$label) # Accuracy
+
+# CVgeneric Function Verification
+result=CVgeneric("logistic", raw.data, raw.data$label, 10, "default")
+1-result[[1]]
+1-result[[2]]
+```
+
+Ada-boosting:
+```{r, error=FALSE}
+# Ada-boosting
+#ada.fit = ada(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = raw.data,
+#               loss = "logistic", type = "discrete")
+#ada.pred = predict(ada.fit, newdata = test, type = "vector")
+#mean(ada.pred!=test$label)
+
+# CVgeneric Function Verification
+#CVgeneric("ada", raw.data, raw.data$label, 10, "default")
+```
+
+Bagging Method:
+```{r, error=FALSE}
+# Bagging
+#bag.fit = bagging(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+#                  data = raw.data, nbagg = 100, 
+#                  control = rpart.control(minsplit = 2, cp = 0, xval = 0))
+#bag.pred = predict(bag.fit, newdata = test)
+#1 - mean(bag.pred!=test$label) # Accuracy 
+```
+
+Generalized Boosted Regression Model(GBM): 
+```{r}
+# Generalized Boosted Regression Model(GBM)
+gbm.fit = gbm(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = raw.data, 
+              distribution = "bernoulli",
+              interaction.depth = 5, n.trees = 200)
+gbm.prob = predict(gbm.fit, newdata = test, 
+                   n.trees =200, type = "response")
+gbm.pred = ifelse(gbm.prob > 0.5, 1, 0)
+1 - mean(gbm.pred != test$label) # Accuracy 
+
+# CV Verification
+feature=raw.data[,3:11]
+gbm.result=gbm.pre=list()
+for (i in 1:K) {
+    gbm.result[[i]]=gbm(label~NDAI+CORR+SD+DF+CF+BF+AF+AN,feature[-folds[[i]],], distribution = "bernoulli",
+              interaction.depth = 5, n.trees = 200)
+    
+    gbm.pre[[i]]=predict(gbm.result[[i]],feature[-folds[[i]],],n.trees =200, type = "response")
+   gbm.pre[[i]] = ifelse(gbm.pre[[i]] > 0.5, 1, 0)
+    err[i]=mean(gbm.pre[[i]]!= feature$label[-folds[[i]]])
+    }
+  1-err
+    1-mean(err)
+```
+
+Random Forest:
+```{r}
+# Random Forest
+rf.fit = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+                      data = raw.data, ntree = 160)
+rf.pred = predict(rf.fit, newdata = test)
+plot(rf.fit)
+1-mean(rf.pred!=test$label)
+
+# CVgeneric Function Verification
+result=CVgeneric("rf", raw.data, raw.data$label, 10, "default")
+1-result[[1]]
+1-result[[2]]
+```
+
+Tree Method:
+```{r}
+# Tree
+tree.fit = rpart(as.factor(label)~., data = raw.data, method = "class",
+                 control = rpart.control(maxdepth = 3))
+tree.pred = predict(tree.fit, newdata = test, type = "class")
+1 - mean(tree.pred != test$label) # Accuracy
+```
+
+
+
+#####(b)
+```{r}
+roc.lda = roc(response = test$label, predictor = as.numeric(lda.pred$class))
+proc.lda = plot(roc.lda, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2), 
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = "ROC of LDA")
+
+roc.qda = roc(response = test$label, predictor = as.numeric(qda.pred$class))
+proc.qda = plot(roc.qda, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2), 
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = "ROC of QDA")
+
+roc.glm = roc(response = test$label, predictor = as.numeric(glm.pred))
+proc.glm = plot(roc.glm, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2), 
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = "ROC of Logistic Regression")
+
+roc.rf = roc(response = test$label, predictor = as.numeric(rf.pred))
+proc.rf = plot(roc.rf, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2), 
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = "ROC of Random Forest")
+
+roc.gbm = roc(response = test$label, predictor = as.numeric(gbm.pred))
+procgbm = plot(roc.gbm, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2), 
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = "ROC of GBM")
+
+```
+
+#####(c)
+```{r}
+# PR Curve Set-up
+label = test$label
+ngrids = length(label)
+TPR = rep(0, ngrids)
+FPR = rep(0, ngrids)
+p0 = rep(0, ngrids)
+P = rep(0, ngrids)
+R = rep(0, ngrids)
+p0 = rep(0, ngrids)
+A = rep(0, ngrids)
+  
+# PR Curve: QDA
+decision = qda.pred$posterior[,2]
+for(i in 0:ngrids) {
+   p0[i] = i/ngrids
+   pred_label = 1*(decision > p0[i])
+   R[i] = sum(pred_label * label) / sum(label)
+   P[i] = sum(pred_label * label) / sum(pred_label)
+}
+  
+plot(R, P, col=4,lwd=5, type="l",xlab="Recall", ylab="Precision", 
+     main="PR Curve of QDA")
+
+# PR Curve: LDA
+decision = lda.pred$posterior[,2]
+for(i in 0:ngrids) {
+   p0[i] = i/ngrids
+   pred_label = 1*(decision > p0[i])
+   R[i] = sum(pred_label * label) / sum(label)
+   P[i] = sum(pred_label * label) / sum(pred_label)
+}
+  
+plot(R, P, col=4,lwd=5, type="l",xlab="Recall", ylab="Precision", 
+    main="PR Curve of LDA")
+
+# PR Curve: Logistic Regression
+decision = glm.probs
+for(i in 0:ngrids) {
+   p0[i] = i/ngrids
+   pred_label = 1*(decision > p0[i])
+   R[i] = sum(pred_label * label) / sum(label)
+   P[i] = sum(pred_label * label) / sum(pred_label)
+}
+  
+plot(R, P, col=4,lwd=5, type="l",xlab="Recall", ylab="Precision", 
+     main="PR Curve of Logistic")
+
+# PR Curve: Random Forest 
+rf.pred = predict(rf.fit, newdata = test,type = "prob")
+decision = rf.pred[,2]
+for(i in 0:ngrids) {
+   p0[i] = i/ngrids
+   pred_label = 1*(decision > p0[i])
+   R[i] = sum(pred_label * label) / sum(label)
+   P[i] = sum(pred_label * label) / sum(pred_label)
+}
+
+plot(R, P, col=4,lwd=5, type="l",xlab="Recall", ylab="Precision", 
+     main="PR Curve of Random Forest")
+
+# PR Curve: GBM
+decision = gbm.prob
+for(i in 0:ngrids) {
+   p0[i] = i/ngrids
+   pred_label = 1*(decision > p0[i])
+   R[i] = sum(pred_label * label) / sum(label)
+   P[i] = sum(pred_label * label) / sum(pred_label)
+}
+  
+plot(R, P, col=4,lwd=5, type="l",xlab="Recall", ylab="Precision", 
+     main="PR Curve of GBM")
+
+```
+
+### Question 4
+#####(a)
+```{r}
+# Logistic Regression Diagnostics
+glm.fit = glm(as.factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, data=train,family=binomial)
+glm.probs = predict(glm.fit, test, type="response")
+plot(glm.fit)
+
+coe=matrix(nrow = 100,ncol=4)
+for (i in 1:100) {
+  index=sample(nrow(train),round(i/100*nrow(train)))
+  glm.fit = glm(as.factor(label)~CORR+SD+NDAI, data=train[index,],family=binomial)
+  coe[i,]=glm.fit$coefficients
+}
+`percentage`=1:100
+coe=cbind(`percentage`,coe)
+names(coe)<-c("percentage","intercept","CORR","SD","NDAI")
+
+ggplot(data.frame(scale(coe)))+
+  geom_point(aes(x=percentage,y=CORR,color = ))+
+  geom_point(aes(x=percentage,y=SD,color="grey50"))+
+  geom_point(aes(x=percentage,y=NDAI,color="red"))+
+  geom_point(aes(x=percentage,y=intercept,color="qsec"))
+
+ggplot(coe)+
+  geom_line(aes(x=percentage,y=CORR,color="blue"))+
+  geom_line(aes(x=percentage,y=SD,color="grey50"))+
+  geom_line(aes(x=percentage,y=NDAI,color="red"))+
+  geom_line(aes(x=percentage,y=intercept,color="qsec"))
+
+summary(gbm.fit)
+```
+
+```{r}
+# GBM Diagnostics
+gbm.fit = gbm(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = train, 
+              distribution = "bernoulli",
+              interaction.depth = 5, n.trees = 800)
+err = c()
+for(i in 1:800) {
+  pred.gbm = predict(gbm.fit, newdata = test, 
+                     n.trees = i, type = "response")
+  pred.gbm = ifelse(pred.gbm>0.5, 1, 0)
+  err[i] = mean(pred.gbm != test$label)
+}
+plot(1:800, err, ylim = c(0, 0.5), type = "b", col = "red", 
+     xlab = "iter", ylab = "error rate")
+# There seems to be some over-fitting trend
+
+gbm.pred = predict(gbm.fit, newdata = test, 
+                   n.trees =800, type = "response")
+gbm.pred = ifelse(gbm.pred > 0.5, 1, 0)
+mean(gbm.pred != test$label) #Test Error
+
+# Select the best iter
+best.iter <- gbm.perf(gbm.fit, method = "OOB")
+gbm.fit = gbm(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = train, 
+              distribution = "bernoulli",
+              interaction.depth = 5, n.trees = best.iter)
+err = c()
+for(i in 1:best.iter) {
+  pred.gbm = predict(gbm.fit, newdata = test, 
+                     n.trees = i, type = "response")
+  pred.gbm = ifelse(pred.gbm>0.5, 1, 0)
+  err[i] = mean(pred.gbm != test$label)
+}
+plot(1:best.iter, err, ylim = c(0, 0.5), type = "b", col = "red", 
+     xlab = "iter", ylab = "error rate")
+gbm.pred = predict(gbm.fit, newdata = test, 
+                   n.trees =best.iter, type = "response")
+gbm.pred = ifelse(gbm.pred > 0.5, 1, 0)
+mean(gbm.pred != test$label)
+```
+
+#####(b)
+```{r}
+# Random Forest Analysis
+rf.fit = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+                      data = train, mtry=3,ntree = 160)
+rf.pred = predict(rf.fit, newdata = test)
+mean(rf.pred!=test$label)
+
+zero=TRUE
+list.images=list(image1,image2,image3)
+part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+# Division Method 1: Vertical
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=c(1:3)
+  vali.blocks.index=c(4:6)
+  test.blocks.index=c(7:9)
+  
+train.index=list.images[[i]]$blockid%in%train.blocks.index
+test.index=list.images[[i]]$blockid%in%test.blocks.index
+vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+
+trainsub[[i]]=list.images[[i]][ train.index, ]
+testsub[[i]]=list.images[[i]][test.index,]
+valisub[[i]]=list.images[[i]][vali.index,]
+trainsub[[i]]=trainsub[[i]][trainsub[[i]]$label != 0, ]
+testsub[[i]]=testsub[[i]][testsub[[i]]$label != 0, ]
+valisub[[i]]=valisub[[i]][valisub[[i]]$label != 0, ]
+
+  trainsub[[i]]$label = (trainsub[[i]]$label + 1)/2
+  testsub[[i]]$label= (testsub[[i]]$label + 1)/2
+  valisub[[i]]$label=(valisub[[i]]$label+1)/2
+}
+
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+
+```
+
+```{r}
+# Division 1 Verification
+err=c()
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = trainsub[[i]])
+  err[i]=mean(rf.pred!=trainsub[[i]]$label)
+}
+err # individual prediction error
+mean(err) # accuracy
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = testsub[[i]])
+  err[i]=mean(rf.pred!=testsub[[i]]$label)
+}
+err
+mean(err)
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = valisub[[i]])
+  err[i]=mean(rf.pred!=valisub[[i]]$label)
+}
+err
+mean(err)
+
+```
+
+```{r}
+# Division Method 2: Horizontal
+zero=TRUE
+list.images=list(image1,image2,image3)
+part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=c(1,4,7)
+  vali.blocks.index=c(2,5,8)
+  test.blocks.index=c(3,6,9)
+  
+train.index=list.images[[i]]$blockid%in%train.blocks.index
+test.index=list.images[[i]]$blockid%in%test.blocks.index
+vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+  
+trainsub[[i]]=list.images[[i]][ train.index, ]
+testsub[[i]]=list.images[[i]][test.index,]
+valisub[[i]]=list.images[[i]][vali.index,]
+
+trainsub[[i]]=trainsub[[i]][trainsub[[i]]$label != 0,]
+testsub[[i]]=testsub[[i]][testsub[[i]]$label != 0, ]
+valisub[[i]]=valisub[[i]][valisub[[i]]$label != 0, ]
+
+trainsub[[i]]$label = (trainsub[[i]]$label + 1)/2
+  testsub[[i]]$label= (testsub[[i]]$label + 1)/2
+  valisub[[i]]$label=(valisub[[i]]$label+1)/2
+
+}
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+```
+
+```{r}
+# Division 2 Verification
+err=c()
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = trainsub[[i]])
+  err[i]=mean(rf.pred!=trainsub[[i]]$label)
+}
+err # individual prediction error
+mean(err) # accuracy
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = testsub[[i]])
+  err[i]=mean(rf.pred!=testsub[[i]]$label)
+}
+err
+mean(err)
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = valisub[[i]])
+  err[i]=mean(rf.pred!=valisub[[i]]$label)
+}
+err
+mean(err)
+
+```
+
+#####(c)
+```{r}
+# Random Forest
+rf.fit = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+                      data = raw.data, ntree = 160)
+rf.pred = predict(rf.fit, newdata = test)
+
+# Better Random Forest
+rf.fit.2 = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN+
+                          SD^2+CORR^2+y^2+x^2+NDAI^2, 
+                      data = raw.data, ntree = 160)
+rf.pred.2 = predict(rf.fit.2, newdata = test)
+1 - mean(rf.pred.2!=test$label)
+
+# Even Better Random Forest
+rf.fit.3 = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN+x^2+y^2, 
+                      data = raw.data, ntree = 160)
+rf.pred.3 = predict(rf.fit.3, newdata = test)
+
+# Accuracies
+1 - mean(rf.pred!=test$label)
+1 - mean(rf.pred.3!=test$label)
+1 - mean(rf.pred.2!=test$label)
+
+# Parameter Plots
+plot(rf.fit, main="Random Forest")
+plot(rf.fit.2, main="Better Random Forest")
+plot(rf.fit.3, main="Random Forest 3")
+```
+
+#####(d)
+```{r}
+sm=2
+# Splitting Method 2
+
+if(sm==2) {
+ zero=TRUE
+ list.images=list(image1,image2,image3)
+ part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=sample(k^2,round(part*k^2))
+  other.blocks.index=index.all[index.all%in%train.blocks.index==FALSE]
+  vali.blocks.index=sample(other.blocks.index,round(length(other.blocks.index)/2))
+  test.blocks.index=other.blocks.index[other.blocks.index%in%vali.blocks.index==FALSE]
+  
+  train.index=list.images[[i]]$blockid%in%train.blocks.index
+  vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+  test.index=list.images[[i]]$blockid%in%test.blocks.index
+
+  trainsub[[i]]=list.images[[i]][ train.index, ]
+  valisub[[i]] =  list.images[[i]][vali.index, ]
+  testsub[[i]]=list.images[[i]][test.index,]
+
+}
+
+ggplot(list.images[[1]]) + 
+  ggtitle("Image 1 Map") + geom_point(aes(x=x, y=y, color=factor(blockid)))
+ggplot(list.images[[2]]) + 
+  ggtitle("Image 2 Map") + geom_point(aes(x=x, y=y, color=factor(blockid)))
+ggplot(list.images[[3]]) + 
+  ggtitle("Image 3 Map") + geom_point(aes(x=x, y=y, color=factor(blockid))) 
+
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+
+if (zero) {
+  train = train[train$label != 0, ]
+  test=test[test$label!=0,]
+  vali=vali[vali$label!=0,]
+  
+  train$label = (train$label + 1)/2
+  test$label= (test$label + 1)/2
+  vali$label=(vali$label + 1)/2
+}}
+```
+
+```{r}
+# GBM Diagnostics
+gbm.fit = gbm(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = train, 
+              distribution = "bernoulli",
+              interaction.depth = 5, n.trees = 800)
+err = c()
+for(i in 1:800) {
+  pred.gbm = predict(gbm.fit, newdata = test, 
+                     n.trees = i, type = "response")
+  pred.gbm = ifelse(pred.gbm>0.5, 1, 0)
+  err[i] = mean(pred.gbm != test$label)
+}
+plot(1:800, err, ylim = c(0, 0.5), type = "b", col = "red", 
+     xlab = "iter", ylab = "error rate")
+# There seems to be some over-fitting trend
+
+gbm.pred = predict(gbm.fit, newdata = test, 
+                   n.trees =800, type = "response")
+gbm.pred = ifelse(gbm.pred > 0.5, 1, 0)
+mean(gbm.pred != test$label) #Test Error
+
+# Select the best iter
+best.iter <- gbm.perf(gbm.fit, method = "OOB")
+gbm.fit = gbm(label~CORR+SD+NDAI+DF+CF+BF+AF+AN, data = train, 
+              distribution = "bernoulli",
+              interaction.depth = 5, n.trees = best.iter)
+err = c()
+for(i in 1:best.iter) {
+  pred.gbm = predict(gbm.fit, newdata = test, 
+                     n.trees = i, type = "response")
+  pred.gbm = ifelse(pred.gbm>0.5, 1, 0)
+  err[i] = mean(pred.gbm != test$label)
+}
+plot(1:best.iter, err, ylim = c(0, 0.5), type = "b", col = "red", 
+     xlab = "iter", ylab = "error rate")
+gbm.pred = predict(gbm.fit, newdata = test, 
+                   n.trees =best.iter, type = "response")
+gbm.pred = ifelse(gbm.pred > 0.5, 1, 0)
+mean(gbm.pred != test$label)
+```
+
+```{r}
+# Random Forest Analysis
+rf.fit = randomForest(factor(label)~CORR+SD+NDAI+DF+CF+BF+AF+AN, 
+                      data = train, mtry=3,ntree = 160)
+rf.pred = predict(rf.fit, newdata = test)
+mean(rf.pred!=test$label)
+
+zero=TRUE
+list.images=list(image1,image2,image3)
+part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+# Division Method 1: Vertical
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=c(1:3)
+  vali.blocks.index=c(4:6)
+  test.blocks.index=c(7:9)
+  
+train.index=list.images[[i]]$blockid%in%train.blocks.index
+test.index=list.images[[i]]$blockid%in%test.blocks.index
+vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+
+trainsub[[i]]=list.images[[i]][ train.index, ]
+testsub[[i]]=list.images[[i]][test.index,]
+valisub[[i]]=list.images[[i]][vali.index,]
+trainsub[[i]]=trainsub[[i]][trainsub[[i]]$label != 0, ]
+testsub[[i]]=testsub[[i]][testsub[[i]]$label != 0, ]
+valisub[[i]]=valisub[[i]][valisub[[i]]$label != 0, ]
+
+  trainsub[[i]]$label = (trainsub[[i]]$label + 1)/2
+  testsub[[i]]$label= (testsub[[i]]$label + 1)/2
+  valisub[[i]]$label=(valisub[[i]]$label+1)/2
+}
+
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+
+```
+
+```{r}
+# Division 1 Verification
+err=c()
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = trainsub[[i]])
+  err[i]=mean(rf.pred!=trainsub[[i]]$label)
+}
+err # individual prediction error
+mean(err) # accuracy
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = testsub[[i]])
+  err[i]=mean(rf.pred!=testsub[[i]]$label)
+}
+err
+mean(err)
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = valisub[[i]])
+  err[i]=mean(rf.pred!=valisub[[i]]$label)
+}
+err
+mean(err)
+
+```
+
+```{r}
+# Division Method 2: Horizontal
+zero=TRUE
+list.images=list(image1,image2,image3)
+part=1/2;k=3;trainsub<-valisub<-testsub<-list()
+
+for (i in 1:3) {
+  blockx = floor(k*(list.images[[i]]$x-min(list.images[[i]]$x))/
+                   (max(list.images[[i]]$x)-min(list.images[[i]]$x) + 1))
+  blocky = floor(k*(list.images[[i]]$y-min(list.images[[i]]$y))/
+                   (max(list.images[[i]]$y)-min(list.images[[i]]$y) + 1))
+  blocknum  = k*blocky + blockx +1
+  
+  list.images[[i]]$blockid = blocknum
+  index.all=1:k^2
+  train.blocks.index=c(1,4,7)
+  vali.blocks.index=c(2,5,8)
+  test.blocks.index=c(3,6,9)
+  
+train.index=list.images[[i]]$blockid%in%train.blocks.index
+test.index=list.images[[i]]$blockid%in%test.blocks.index
+vali.index=list.images[[i]]$blockid%in%vali.blocks.index
+  
+trainsub[[i]]=list.images[[i]][ train.index, ]
+testsub[[i]]=list.images[[i]][test.index,]
+valisub[[i]]=list.images[[i]][vali.index,]
+
+trainsub[[i]]=trainsub[[i]][trainsub[[i]]$label != 0,]
+testsub[[i]]=testsub[[i]][testsub[[i]]$label != 0, ]
+valisub[[i]]=valisub[[i]][valisub[[i]]$label != 0, ]
+
+trainsub[[i]]$label = (trainsub[[i]]$label + 1)/2
+  testsub[[i]]$label= (testsub[[i]]$label + 1)/2
+  valisub[[i]]$label=(valisub[[i]]$label+1)/2
+
+}
+train=rbind(trainsub[[1]],trainsub[[2]],trainsub[[3]])
+test=rbind(testsub[[1]],testsub[[2]],testsub[[3]])
+vali=rbind(valisub[[1]],valisub[[2]],valisub[[3]])
+```
+
+```{r}
+# Division 2 Verification
+err=c()
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = trainsub[[i]])
+  err[i]=mean(rf.pred!=trainsub[[i]]$label)
+}
+err # individual prediction error
+mean(err) # accuracy
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = testsub[[i]])
+  err[i]=mean(rf.pred!=testsub[[i]]$label)
+}
+err
+mean(err)
+
+for (i in 1:3) {
+  rf.pred = predict(rf.fit, newdata = valisub[[i]])
+  err[i]=mean(rf.pred!=valisub[[i]]$label)
+}
+err
+mean(err)
+
+```
